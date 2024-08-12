@@ -1,6 +1,6 @@
-import { createSignal, createEffect, For, onMount, Show, mergeProps, on, createMemo } from 'solid-js';
+import { createSignal, createEffect, For, onMount, Show, mergeProps, on, createMemo, Accessor } from 'solid-js';
 import { v4 as uuidv4 } from 'uuid';
-import { sendMessageQuery, isStreamAvailableQuery, IncomingInput, getChatbotConfig } from '@/queries/sendMessageQuery';
+import { sendMessageQuery, isStreamAvailableQuery, IncomingInput, getChatbotConfig, getGuidedQuestionQuery } from '@/queries/sendMessageQuery';
 import { TextInput } from './inputs/textInput';
 import { GuestBubble } from './bubbles/GuestBubble';
 import { BotBubble } from './bubbles/BotBubble';
@@ -8,7 +8,6 @@ import { LoadingBubble } from './bubbles/LoadingBubble';
 import { SourceBubble } from './bubbles/SourceBubble';
 import { StarterPromptBubble } from './bubbles/StarterPromptBubble';
 import { BotMessageTheme, FooterTheme, TextInputTheme, UserMessageTheme, FeedbackTheme } from '@/features/bubble/types';
-import { Badge } from './Badge';
 import socketIOClient from 'socket.io-client';
 import { Popup } from '@/features/popup';
 import { Avatar } from '@/components/avatars/Avatar';
@@ -18,6 +17,7 @@ import { CancelButton } from './buttons/CancelButton';
 import { cancelAudioRecording, startAudioRecording, stopAudioRecording } from '@/utils/audioRecording';
 import { LeadCaptureBubble } from '@/components/bubbles/LeadCaptureBubble';
 import { removeLocalStorageChatHistory, getLocalStorageChatflow, setLocalStorageChatflow } from '@/utils';
+import { GuidedQuestionBubble } from './bubbles/GuidedQuestionBubble';
 
 export type FileEvent<T = EventTarget> = {
   target: T;
@@ -238,6 +238,7 @@ export const Bot = (botProps: BotProps & { class?: string }) => {
   const [leadsConfig, setLeadsConfig] = createSignal<LeadsConfig>();
   const [isLeadSaved, setIsLeadSaved] = createSignal(false);
   const [leadEmail, setLeadEmail] = createSignal('');
+  const [guidedQuestion, setGuidedQuestion] = createSignal<string[]>([]);
 
   // drag & drop file input
   // TODO: fix this type
@@ -317,6 +318,16 @@ export const Bot = (botProps: BotProps & { class?: string }) => {
     }
   };
 
+  const getGuidedQuestions = async (guideAnswerParams: IncomingInput) => {
+    const guide = await getGuidedQuestionQuery({
+      chatflowid: props.chatflowid,
+      apiHost: props.apiHost,
+      body: guideAnswerParams,
+    });
+    const guidedAnswer = JSON.parse(guide.data);
+    setGuidedQuestion(guidedAnswer.questions);
+  };
+
   let hasSoundPlayed = false;
   // TODO: this has the bug where first message is not showing: https://github.com/FlowiseAI/FlowiseChatEmbed/issues/158
   // The solution is to use SSE
@@ -327,15 +338,24 @@ export const Bot = (botProps: BotProps & { class?: string }) => {
     agentReasoning: IAgentReasoning[] = [],
     action: IAction,
     resultText: string,
+    messageId?: string,
   ) => {
     setMessages((data) => {
       const updated = data.map((item, i) => {
         if (i === data.length - 1) {
+          // if (resultText) {
+          //   const guideAnswerParams: IncomingInput = {
+          //     question: resultText,
+          //     chatId: chatId(),
+          //   };
+
+          //   getGuidedQuestions(guideAnswerParams);
+          // }
           if (resultText && !hasSoundPlayed) {
             playReceiveSound();
             hasSoundPlayed = true;
           }
-          return { ...item, message: item.message + text, sourceDocuments, fileAnnotations, agentReasoning, action };
+          return { ...item, message: item.message + text, sourceDocuments, fileAnnotations, agentReasoning, action, messageId };
         }
         return item;
       });
@@ -506,9 +526,9 @@ export const Bot = (botProps: BotProps & { class?: string }) => {
         else if (data.json) text = JSON.stringify(data.json, null, 2);
         else text = JSON.stringify(data, null, 2);
 
-        updateLastMessage(text, data?.sourceDocuments, data?.fileAnnotations, data?.agentReasoning, data?.action, data.text);
+        updateLastMessage(text, data?.sourceDocuments, data?.fileAnnotations, data?.agentReasoning, data?.action, data.text, data?.chatMessageId);
       } else {
-        updateLastMessage('', data?.sourceDocuments, data?.fileAnnotations, data?.agentReasoning, data?.action, data.text);
+        updateLastMessage('', data?.sourceDocuments, data?.fileAnnotations, data?.agentReasoning, data?.action, data.text, data?.chatMessageId);
       }
       setLoading(false);
       setUserInput('');
@@ -566,6 +586,20 @@ export const Bot = (botProps: BotProps & { class?: string }) => {
       console.error(`error: ${errorData}`);
     }
   };
+
+  createEffect(() => {
+    const lastMessage = messages().length > 0 ? messages()[messages().length - 1] : undefined;
+    if (lastMessage && lastMessage.type === 'apiMessage' && lastMessage.messageId) {
+      const lastMessages = messages().slice(-5);
+      const history = lastMessages.map((message) => `${message.type}: ${message.message}`).join(' \n ');
+      const guideAnswerParams: IncomingInput = {
+        question: history,
+        chatId: chatId(),
+      };
+
+      getGuidedQuestions(guideAnswerParams);
+    }
+  });
 
   createEffect(() => {
     if (props.starterPrompts && props.starterPrompts.length > 0) {
@@ -1095,6 +1129,22 @@ export const Bot = (botProps: BotProps & { class?: string }) => {
               }}
             </For>
           </div>
+
+          <Show when={messages().length > 1}>
+            <Show when={guidedQuestion().length > 0}>
+              <div class="w-full flex flex-row flex-wrap px-5 py-[10px] gap-2">
+                <For each={[...guidedQuestion()]}>
+                  {(key) => (
+                    <GuidedQuestionBubble
+                      prompt={key}
+                      onPromptClick={() => promptClick(key)}
+                      fontSize={botProps.starterPromptFontSize} // Pass it here as a number
+                    />
+                  )}
+                </For>
+              </div>
+            </Show>
+          </Show>
           <Show when={messages().length === 1}>
             <Show when={starterPrompts().length > 0}>
               <div class="w-full flex flex-row flex-wrap px-5 py-[10px] gap-2">
@@ -1217,12 +1267,12 @@ export const Bot = (botProps: BotProps & { class?: string }) => {
               />
             )}
           </div>
-          <Badge
+          {/* <Badge
             footer={props.footer}
             badgeBackgroundColor={props.badgeBackgroundColor}
             poweredByTextColor={props.poweredByTextColor}
             botContainer={botContainer}
-          />
+          /> */}
         </div>
       </div>
       {sourcePopupOpen() && <Popup isOpen={sourcePopupOpen()} value={sourcePopupSrc()} onClose={() => setSourcePopupOpen(false)} />}
