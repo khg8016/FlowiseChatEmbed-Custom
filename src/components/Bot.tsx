@@ -233,6 +233,7 @@ export const Bot = (botProps: BotProps & { class?: string }) => {
     (props.chatflowConfig?.vars as any)?.customerId ? `${(props.chatflowConfig?.vars as any).customerId.toString()}+${uuidv4()}` : uuidv4(),
   );
   const [starterPrompts, setStarterPrompts] = createSignal<string[]>([], { equals: false });
+  const [followupQuestionPrompt, setFollowupQuestionPrompt] = createSignal<string>('');
   const [chatFeedbackStatus, setChatFeedbackStatus] = createSignal<boolean>(false);
   const [uploadsConfig, setUploadsConfig] = createSignal<UploadsConfig>();
   const [leadsConfig, setLeadsConfig] = createSignal<LeadsConfig>();
@@ -588,16 +589,19 @@ export const Bot = (botProps: BotProps & { class?: string }) => {
   };
 
   createEffect(() => {
-    const lastMessage = messages().length > 0 ? messages()[messages().length - 1] : undefined;
-    if (lastMessage && lastMessage.type === 'apiMessage' && lastMessage.messageId) {
-      const lastMessages = messages().slice(-5);
-      const history = lastMessages.map((message) => `${message.type}: ${message.message}`).join(' \n ');
-      const guideAnswerParams: IncomingInput = {
-        question: history,
-        chatId: chatId(),
-      };
+    if (followupQuestionPrompt() && followupQuestionPrompt() !== '') {
+      console.log(followupQuestionPrompt());
+      const lastMessage = messages().length > 0 ? messages()[messages().length - 1] : undefined;
+      if (lastMessage && lastMessage.type === 'apiMessage' && lastMessage.messageId) {
+        const lastMessages = messages().slice(-5);
+        const history = lastMessages.map((message) => `${message.type}: ${message.message}`).join(' \n ');
+        const guideAnswerParams: IncomingInput = {
+          question: history,
+          chatId: chatId(),
+        };
 
-      getGuidedQuestions(guideAnswerParams);
+        getGuidedQuestions(guideAnswerParams);
+      }
     }
   });
 
@@ -679,6 +683,9 @@ export const Bot = (botProps: BotProps & { class?: string }) => {
           prompts.push(chatbotConfig.starterPrompts[key].prompt);
         });
         setStarterPrompts(prompts.filter((prompt) => prompt !== ''));
+      }
+      if (chatbotConfig.followupQuestionPrompt) {
+        setFollowupQuestionPrompt(chatbotConfig.followupQuestionPrompt);
       }
       if (chatbotConfig.chatFeedback) {
         const chatFeedbackStatus = chatbotConfig.chatFeedback.status;
